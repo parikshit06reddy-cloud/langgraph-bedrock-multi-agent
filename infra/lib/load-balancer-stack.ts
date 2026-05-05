@@ -32,8 +32,14 @@ export class LoadBalancerStack extends cdk.Stack {
     },
   ];
 
+  private readonly envName: string;
+  private readonly isProd: boolean;
+
   constructor(scope: Construct, id: string, props: LoadBalancerStackProps) {
     super(scope, id, props);
+
+    this.envName = (this.node.tryGetContext('environment') || 'dev') as string;
+    this.isProd = this.envName === 'prod';
 
     const { vpc, albSecurityGroup, lambdaSecurityGroup } = props;
 
@@ -53,6 +59,7 @@ export class LoadBalancerStack extends cdk.Stack {
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
       },
+      deletionProtection: this.isProd,
     });
 
     // Configure ALB attributes for longer agent processing times
@@ -128,10 +135,12 @@ export class LoadBalancerStack extends cdk.Stack {
   }
 
   private createHttpListener(): void {
+    // `open: true` would auto-add 0.0.0.0/0 ingress on the ALB SG, defeating any tighter rules.
+    // We rely on the explicit ingress rules wired up in the ECS/Lambda security groups instead.
     const listener = this.loadBalancer.addListener('HttpListener', {
       port: 80,
       protocol: elbv2.ApplicationProtocol.HTTP,
-      open: true,
+      open: false,
     });
 
     // Add default action (redirect to supervisor)

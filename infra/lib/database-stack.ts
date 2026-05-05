@@ -18,6 +18,9 @@ export class DatabaseStack extends cdk.Stack {
 
     const { vpc, databaseSecurityGroup } = props;
 
+    const envName = (this.node.tryGetContext('environment') || 'dev') as string;
+    const isProd = envName === 'prod';
+
     // Create database credentials secret
     this.databaseSecret = new secretsmanager.Secret(this, 'DatabaseSecret', {
       description: 'Database credentials for multi-agent system',
@@ -46,7 +49,9 @@ export class DatabaseStack extends cdk.Stack {
       description: 'Parameter group for multi-agent Aurora PostgreSQL cluster',
       parameters: {
         'shared_preload_libraries': 'pg_stat_statements',
-        'log_statement': 'all',
+        // 'all' logs every statement, including parameter values, which can leak PII / secrets.
+        // Use 'ddl' in prod and 'all' only when explicitly debugging in non-prod.
+        'log_statement': isProd ? 'ddl' : 'all',
         'log_min_duration_statement': '1000',
         'max_connections': '200',
         'log_rotation_age': '1440',
@@ -86,7 +91,7 @@ export class DatabaseStack extends cdk.Stack {
 
       // Storage configuration
       storageEncrypted: true,
-      deletionProtection: false, // Set to true for production
+      deletionProtection: isProd,
 
       // Monitoring configuration
       monitoringInterval: cdk.Duration.seconds(60),

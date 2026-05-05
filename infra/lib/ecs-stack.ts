@@ -90,8 +90,14 @@ export class EcsStack extends cdk.Stack {
     },
   ];
 
+  private readonly envName: string;
+  private readonly isProd: boolean;
+
   constructor(scope: Construct, id: string, props: EcsStackProps) {
     super(scope, id, props);
+
+    this.envName = (this.node.tryGetContext('environment') || 'dev') as string;
+    this.isProd = this.envName === 'prod';
 
     const { vpc, ecsSecurityGroup, databaseSecret, databaseClusterArn, targetGroups, personalizationKnowledgeBaseId, troubleshootingKnowledgeBaseId, eventsApiId, eventsApiArn, eventsApiEndpoint, eventApiKey, eventsApiHttpDomain } = props;
 
@@ -473,14 +479,16 @@ export class EcsStack extends cdk.Stack {
         DATABASE_USERNAME: ecs.Secret.fromSecretsManager(databaseSecret, 'username'),
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(databaseSecret, 'password'),
       },
-      // Health checks disabled to allow easier debugging and log viewing
-      // healthCheck: {
-      //   command: ['CMD-SHELL', `curl -f http://localhost:${port}/health || exit 1`],
-      //   interval: cdk.Duration.seconds(30),
-      //   timeout: cdk.Duration.seconds(5),
-      //   retries: 1,
-      //   startPeriod: cdk.Duration.seconds(60),
-      // },
+      // Container-level health check. Required in prod so ECS can restart unhealthy tasks.
+      healthCheck: this.isProd
+        ? {
+            command: ['CMD-SHELL', `curl -fsS http://localhost:${port}/health || exit 1`],
+            interval: cdk.Duration.seconds(30),
+            timeout: cdk.Duration.seconds(5),
+            retries: 3,
+            startPeriod: cdk.Duration.seconds(60),
+          }
+        : undefined,
     });
 
     // Create ECS Service with Cloud Map service discovery
@@ -493,14 +501,15 @@ export class EcsStack extends cdk.Stack {
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
       },
-      // enableLogging: true,
-      // healthCheckGracePeriod: cdk.Duration.seconds(60), // Disabled to allow easier debugging
-      enableExecuteCommand: true, // For debugging
+      healthCheckGracePeriod: this.isProd ? cdk.Duration.seconds(60) : undefined,
+      // ECS Exec is OFF in prod by default to reduce attack surface; enable per-incident via context override.
+      enableExecuteCommand: !this.isProd,
       // Deployment configuration to ensure proper rollout
       maxHealthyPercent: 200,
-      minHealthyPercent: 50, // Allow more flexibility during deployments
+      minHealthyPercent: 50,
       circuitBreaker: {
-        rollback: false, // Disable rollback to keep tasks running for debugging
+        // Auto-rollback on failed deployments in prod for safety; manual debug elsewhere.
+        rollback: this.isProd,
       },
       // Add Cloud Map service discovery
       cloudMapOptions: {
